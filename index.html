@@ -15,7 +15,7 @@
 <body class="p-6">
     <div class="max-w-6xl mx-auto bg-white rounded-lg shadow-lg overflow-hidden">
         
-        <!-- Header  -->
+        <!-- Header -->
         <div class="bg-purple-800 p-6 text-white">
             <h1 class="text-2xl font-bold flex items-center gap-2">
                 <svg class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
@@ -26,7 +26,7 @@
 
         <div class="p-6 grid grid-cols-1 lg:grid-cols-3 gap-6">
             
-            <!-- Configuration (Left Column)-->
+            <!-- Configuration (Left Column) -->
             <div class="space-y-4">
                 <h2 class="text-lg font-semibold text-gray-800 border-b pb-2">1. Configuration</h2>
 
@@ -78,8 +78,8 @@
 
                     <div class="col-span-1"></div>
                     <div class="col-span-3">
-                        <label class="block text-sm font-medium text-gray-800">Query</label>
-                        <input type="text" id="queryString" class="mt-1 block w-full border-gray-300 rounded-md shadow-sm p-2 border font-mono" value="">
+                        <label class="block text-sm font-medium text-gray-800">Query String</label>
+                        <input type="text" id="queryString" placeholder="e.g. amount=100&currency=MXN" class="mt-1 block w-full border-gray-300 rounded-md shadow-sm p-2 border font-mono" value="">
                     </div>
 
                     <div class="col-span-1"></div>
@@ -115,13 +115,17 @@
 
                 <div class="flex-grow">
                     <label class="block text-sm font-medium text-gray-800 mb-1">JSON Payload</label>
-                    <textarea id="jsonBody" class="w-full h-64 code-font text-sm p-4 border rounded-md bg-gray-900 text-green-400 focus:outline-none focus:ring-2 focus:ring-purple-500" spellcheck="false"></textarea>
+                    <textarea id="jsonBody" class="w-full h-64 code-font text-sm p-4 border rounded-md bg-gray-900 text-green-400 focus:outline-none focus:ring-2 focus:ring-purple-500 transition-opacity" spellcheck="false"></textarea>
                 </div>
 
                 <div class="grid grid-cols-1 gap-4 mb-4 text-xs font-mono">
                     <div>
+                        <span class="text-gray-400 block">Raw String to Sign <span class="text-gray-400 italic">(Line breaks replaced with \n for visibility)</span>:</span>
+                        <div id="debugRawString" class="text-pink-800 mt-1 break-all bg-pink-50 p-2 rounded border border-pink-100 whitespace-pre-wrap">Waiting for request...</div>
+                    </div>
+                    <div>
                         <span class="text-gray-400 block">Generated Headers:</span>
-                        <div id="debugHeaders" class="text-blue-800 mt-1 break-all bg-blue-50 p-2 rounded border border-blue-100">...</div>
+                        <div id="debugHeaders" class="text-blue-800 mt-1 break-all bg-blue-50 p-2 rounded border border-blue-100">Waiting for request...</div>
                     </div>
                 </div>
 
@@ -163,32 +167,74 @@
                 method: 'POST',
                 path: '/v2/payment-intent',
                 body: {
-                  merchantTransactionId: "4aab7413-c0d5-49ed-80ce-4e7b83659885a6",
-                  merchantReference: "eab48a03-bce5-4e64-87d2-af97b6f15a6",
-                  terminalUuid:"TSDX611748604",
-                  amount: "0.01",
-                  paymentMethodId: "BCLN"
+                 merchantTransactionId: "4aab7413-c0d5-49ed-80ce-4e7b83659885a6",
+                 merchantReference: "eab48a03-bce5-4e64-87d2-af97b6f15a6",
+                 terminalUuid:"TSDX611748604",
+                 amount: "0.01",
+                 paymentMethodId: "BCLN"
                 }
             }
         };
 
-        // Load Template
+        // --- Canonicalization Helpers (Ported from Postman Script) ---
+
+        function pythonQuote(s) {
+            const safe = /[A-Za-z0-9_.-]/;
+            let out = "";
+            for (const ch of String(s)) {
+                if (safe.test(ch)) {
+                    out += ch;
+                } else {
+                    for (const b of new TextEncoder().encode(ch)) {
+                        out += "%" + b.toString(16).toUpperCase().padStart(2, "0");
+                    }
+                }
+            }
+            return out;
+        }
+
+        function buildCanonicalQueryString(rawQuery) {
+            if (!rawQuery) return "";
+            
+            const q = rawQuery.startsWith('?') ? rawQuery.substring(1) : rawQuery;
+            if (!q) return "";
+
+            const params = new URLSearchParams(q);
+            const map = {};
+            params.forEach((value, key) => {
+                map[key] = value;
+            });
+
+            return Object.keys(map)
+                .sort()
+                .map((k) => `${pythonQuote(k)}=${pythonQuote(map[k])}`)
+                .join("&");
+        }
+
+        // --- Core UI Logic ---
+
         function loadTemplate(type) {
             const t = TEMPLATES[type];
-            document.getElementById('method').value = t.method;
+            const methodSelect = document.getElementById('method');
+            methodSelect.value = t.method;
             document.getElementById('path').value = t.path;
+            
+            document.getElementById('queryString').value = '';
 
-            // ADD THIS BLOCK: Generate new UUIDs when this template is loaded
             if (type === 'payment_intent') {
                 t.body.merchantTransactionId = crypto.randomUUID();
                 t.body.merchantReference = crypto.randomUUID();
             }
 
-            if (t.body) {
-                document.getElementById('jsonBody').value = JSON.stringify(t.body, null, 2);
+            const jsonBody = document.getElementById('jsonBody');
+            if (t.body && t.method !== 'GET') {
+                jsonBody.value = JSON.stringify(t.body, null, 2);
             } else {
-                document.getElementById('jsonBody').value = '';
+                jsonBody.value = '';
             }
+            
+            // Trigger the change event manually to update the textarea styling
+            methodSelect.dispatchEvent(new Event('change'));
         }
 
         function calculateNonce() {
@@ -202,6 +248,19 @@
             timestampField.value = timestamp;
         }
 
+        // --- NEW: Dynamic Method Listener ---
+        document.getElementById('method').addEventListener('change', function(e) {
+            const jsonBody = document.getElementById('jsonBody');
+            if (e.target.value === 'GET') {
+                jsonBody.value = '';
+                jsonBody.disabled = true;
+                jsonBody.classList.add('opacity-50', 'cursor-not-allowed');
+            } else {
+                jsonBody.disabled = false;
+                jsonBody.classList.remove('opacity-50', 'cursor-not-allowed');
+            }
+        });
+
         // Init
         loadTemplate('payment_intent');
         calculateNonce();
@@ -212,27 +271,27 @@
             const btn = document.getElementById('sendBtn');
             const output = document.getElementById('responseOutput');
             const statusDiv = document.getElementById('responseStatus');
-            const debugDiv = document.getElementById('debugHeaders');
+            const debugHeadersDiv = document.getElementById('debugHeaders');
+            const debugRawStringDiv = document.getElementById('debugRawString');
 
-            // UI Loading
             btn.disabled = true;
             btn.classList.add('opacity-50', 'cursor-not-allowed');
             output.innerText = "Processing...";
             statusDiv.innerText = "Sending...";
             output.classList.remove('text-red-400', 'text-green-400');
 
-            // Gather values
-            const host = document.getElementById('hostUrl').value.replace(/\/$/, ""); 
-            const method = document.getElementById('method').value;
-            const path = document.getElementById('path').value;
-            const queryString = document.getElementById('queryString').value;
-            const apiKey = document.getElementById('apiKey').value;
-            const secretKey = document.getElementById('secretKey').value;
+            const host = document.getElementById('hostUrl').value.trim().replace(/\/$/, ""); 
+            const method = document.getElementById('method').value.trim().toUpperCase();
+            const path = document.getElementById('path').value.trim();
+            const apiKey = document.getElementById('apiKey').value.trim();
+            const secretKey = document.getElementById('secretKey').value.trim();
             const rawBody = document.getElementById('jsonBody').value;
-            const timestamp = document.getElementById('timestamp').value;
-            const nonce = document.getElementById('nonce').value;
+            const timestamp = document.getElementById('timestamp').value.trim();
+            const nonce = document.getElementById('nonce').value.trim();
+            
+            let rawQuery = document.getElementById('queryString').value.trim();
+            const canonicalQuery = buildCanonicalQueryString(rawQuery);
 
-            // Basic validation
             if (!apiKey || !secretKey) {
                 alert("Please enter your API Key and Secret Key");
                 btn.disabled = false;
@@ -241,11 +300,11 @@
             }
 
             try {
-                // 1. Prepare Payload
                 let jsonBodyString = "";
                 let parsedBody = null;
 
-                if (rawBody && rawBody.trim().length > 0) {
+                // Explicitly ignore the body for GET requests
+                if (method !== 'GET' && rawBody && rawBody.trim().length > 0) {
                     try {
                         parsedBody = JSON.parse(rawBody);
                         jsonBodyString = JSON.stringify(parsedBody);
@@ -254,19 +313,21 @@
                     }
                 }
 
-                // 2. Calculate HMAC-SHA256 Signature (Web Crypto API)
-                const dataToSign = `${method}\n${path}\n${queryString}\n${jsonBodyString}\n${timestamp}\n${nonce}`;
+                const dataToSign = `${method}\n${path}\n${canonicalQuery}\n${jsonBodyString}\n${timestamp}\n${nonce}`;
+                
+                debugRawStringDiv.innerHTML = dataToSign.replace(/\n/g, '<span class="text-red-500 font-bold mx-1">\\n</span><br>');
+
                 const signature = await generateHmacSha256(secretKey, dataToSign);
                 
-                // 3. Format the new Blokko Auth Payload
                 const authPayload = `Api-Key=${apiKey}, Timestamp=${timestamp}, Nonce=${nonce}, Signature=${signature}`;
 
-                // 4. Debug info
-                debugDiv.innerHTML = `<strong>blokko-signature:</strong> ${authPayload}`;
+                debugHeadersDiv.innerHTML = `<strong>blokko-signature:</strong> ${authPayload}`;
 
-                // 5. Send Request (Axios)
                 const url = `${host}${path}`;
-                const finalUrl = queryString ? `${url}?${queryString}` : url;
+                
+                // Send the RAW query over the network, but sign the CANONICAL query
+                let cleanRawQuery = rawQuery.startsWith('?') ? rawQuery.substring(1) : rawQuery;
+                const finalUrl = cleanRawQuery ? `${url}?${cleanRawQuery}` : url;
 
                 const response = await axios({
                     method: method,
@@ -278,7 +339,6 @@
                     data: parsedBody 
                 });
 
-                // 6. Show Success
                 statusDiv.innerText = `${response.status} ${response.statusText}`;
                 statusDiv.className = "font-bold mt-1 text-green-400";
 
@@ -286,20 +346,16 @@
                 output.className = "code-font text-sm text-green-400";
 
             } catch (error) {
-                // 7. Error Handling
                 statusDiv.className = "font-bold mt-1 text-red-400";
                 output.className = "code-font text-sm text-red-400";
 
                 if (error.response) {
-                    // Server Error (4xx, 5xx)
                     statusDiv.innerText = `${error.response.status} ${error.response.statusText}`;
                     output.innerText = JSON.stringify(error.response.data, null, 2);
                 } else if (error.request) {
-                    // Network / CORS Error
                     statusDiv.innerText = "Network Error / CORS";
                     output.innerText = "No response received. Verify:\n1. Server is running.\n2. CORS is enabled.\n3. SSL certificate is valid/accepted.";
                 } else {
-                    // Internal Error
                     statusDiv.innerText = "Internal Error";
                     output.innerText = error.message;
                 }
@@ -309,7 +365,6 @@
             }
         }
 
-        // Helper: Web Crypto HMAC
         async function generateHmacSha256(secret, data) {
             const encoder = new TextEncoder();
             const keyData = encoder.encode(secret);
